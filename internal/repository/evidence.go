@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,7 +77,15 @@ func writeJSONExclusive(path string, value any) error {
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("不可变证据已存在: %s", filepath.Base(path))
+		// 失败保存可能已写入同名证据；内容一致则视作幂等重试，避免阻塞安全重试。
+		existing, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if !bytes.Equal(existing, b) {
+			return fmt.Errorf("不可变证据已存在且内容不一致: %s", filepath.Base(path))
+		}
+		return nil
 	}
 	if err != nil {
 		return err

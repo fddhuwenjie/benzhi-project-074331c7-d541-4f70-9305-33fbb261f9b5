@@ -37,17 +37,16 @@ func writeSnapshot(dir string, a domain.Aggregate) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
+	// 重命名即提交点：rename 成功后新快照已经对后续加载可见。
 	if err = os.Rename(name, filepath.Join(dir, "snapshot.json")); err != nil {
 		return err
 	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	if err = d.Sync(); err != nil {
-		return err
-	}
 	ok = true
+	// 目录 fsync 仅用于崩溃持久化；rename 已提交，失败不得当作保存失败，
+	// 否则调用方会误以为可以回滚已经可见的新状态。
+	if d, derr := os.Open(dir); derr == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
 	return nil
 }

@@ -53,10 +53,16 @@ func (s *FileStore) Create(a domain.Aggregate, event Event) error {
 	if err = os.Mkdir(dir, 0700); err != nil {
 		return err
 	}
-	if err = writeSnapshot(dir, a); err != nil {
+	// 先写事件、再提交快照；任一步失败都清理目录，保证同一请求可安全重试。
+	if err = appendEvent(dir, event); err != nil {
+		_ = os.RemoveAll(dir)
 		return err
 	}
-	return appendEvent(dir, event)
+	if err = writeSnapshot(dir, a); err != nil {
+		_ = os.RemoveAll(dir)
+		return err
+	}
+	return nil
 }
 func (s *FileStore) Load(id string) (domain.Aggregate, error) {
 	s.mu.Lock()
@@ -107,10 +113,21 @@ func (s *FileStore) Save(a domain.Aggregate, expected int64, event Event) error 
 	if err = writeNewEvidence(dir, current, a); err != nil {
 		return err
 	}
-	if err = writeSnapshot(dir, a); err != nil {
+	eventPath := filepath.Join(dir, "events.log")
+	sizeBefore, err := fileSize(eventPath)
+	if err != nil {
 		return err
 	}
-	return appendEvent(dir, event)
+	// 证据与事件先落盘但旧快照仍可见；只有快照 rename 成功后新状态才提交。
+	if err = appendEvent(dir, event); err != nil {
+		return err
+	}
+	if err = writeSnapshot(dir, a); err != nil {
+		// 快照未提交则回滚事件追加，使加载仍返回命令执行前的聚合与 revision。
+		_ = os.Truncate(eventPath, sizeBefore)
+		return err
+	}
+	return nil
 }
 func (s *FileStore) List() ([]domain.Aggregate, error) {
 	entries, err := os.ReadDir(filepath.Join(s.root, "projects"))

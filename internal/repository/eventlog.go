@@ -86,6 +86,30 @@ func appendEvent(dir string, event Event) error {
 		return err
 	}
 	line = append(line, '\n')
+	before, err := fileSize(path)
+	if err != nil {
+		return err
+	}
+	if err = writeAppendSync(path, line); err != nil {
+		// 回滚未完整提交的事件帧，避免截断帧阻塞后续加载与重试。
+		_ = os.Truncate(path, before)
+		return err
+	}
+	return nil
+}
+
+func fileSize(path string) (int64, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
+
+func writeAppendSync(path string, line []byte) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return err
@@ -98,5 +122,8 @@ func appendEvent(dir string, event Event) error {
 		f.Close()
 		return err
 	}
-	return f.Close()
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return nil
 }
