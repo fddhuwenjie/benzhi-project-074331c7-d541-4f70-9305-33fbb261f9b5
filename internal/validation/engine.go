@@ -49,7 +49,7 @@ func (e *Engine) Validate(project domain.MapProject, proof domain.ProofRevision,
 	cachedKey, cached := e.cacheKey, e.cache
 	e.cacheMu.RUnlock()
 	if cachedKey == cacheKey {
-		return cached
+		return cloneResults(cached)
 	}
 	checks := map[string]func(domain.MapProject, domain.ProofRevision) []domain.RuleResult{RuleBraille: checkBraille, RuleDuplicate: checkDuplicates, RuleSpacing: checkSpacing, RuleConnectivity: checkConnectivity, RuleLegend: checkLegend, RuleBoundary: checkBoundary}
 	out := []domain.RuleResult{}
@@ -74,10 +74,24 @@ func (e *Engine) Validate(project domain.MapProject, proof domain.ProofRevision,
 	e.cacheKey = cacheKey
 	e.cache = out
 	e.cacheMu.Unlock()
-	return out
+	return cloneResults(out)
 }
 
 func result(code string, passed bool, severity, message string, refs ...string) domain.RuleResult {
 	sort.Strings(refs)
 	return domain.RuleResult{RuleCode: code, Passed: passed, Severity: severity, ElementRefs: refs, Message: message}
+}
+
+func cloneResults(in []domain.RuleResult) []domain.RuleResult {
+	if in == nil {
+		return nil
+	}
+	out := make([]domain.RuleResult, len(in))
+	for i, r := range in {
+		out[i] = r
+		if r.ElementRefs != nil {
+			out[i].ElementRefs = append([]string(nil), r.ElementRefs...)
+		}
+	}
+	return out
 }
