@@ -13,24 +13,18 @@ func allRuleEvidencePassed(a domain.Aggregate) bool {
 		return false
 	}
 	results := make(map[string]bool, len(validation.AllRules))
+	present := make(map[string]bool, len(validation.AllRules))
+	// 按校样与运行的时间顺序汇总：每条规则以最近一次覆盖它的结果为准，较新的
+	// 失败不会被更早的通过覆盖，未被最新定向复验覆盖的规则沿用其最近结论。
+	// 这与 approvalRuleEvidence 对同一证据的计算保持一致。
 	for _, run := range a.Runs {
-		if run.ProofID == latest.ProofID {
-			for _, result := range run.Results {
-				results[result.RuleCode] = result.Passed
-			}
-			continue
-		}
-		// 相邻修订只会使 AffectedRules 返回的规则失效，其余通过证据可沿用。
 		for _, result := range run.Results {
-			if result.Passed {
-				if _, exists := results[result.RuleCode]; !exists {
-					results[result.RuleCode] = true
-				}
-			}
+			results[result.RuleCode] = result.Passed
+			present[result.RuleCode] = true
 		}
 	}
 	for _, code := range validation.AllRules {
-		if !results[code] {
+		if !present[code] || !results[code] {
 			return false
 		}
 	}
