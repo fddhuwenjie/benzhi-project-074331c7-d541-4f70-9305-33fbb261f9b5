@@ -66,7 +66,7 @@ func (s *FileStore) Create(a domain.Aggregate, event Event) error {
 func (s *FileStore) Load(id string) (domain.Aggregate, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if a, ok := s.cache[id]; ok {
+	if cached, ok := s.cache[id]; ok {
 		dir, err := s.projectDir(id)
 		if err != nil {
 			return domain.Aggregate{}, err
@@ -74,16 +74,42 @@ func (s *FileStore) Load(id string) (domain.Aggregate, error) {
 		if err = verifyEvents(dir); err != nil {
 			return domain.Aggregate{}, err
 		}
-		if err = verifyEvidence(dir, a); err != nil {
+		if err = verifyEvidence(dir, cached); err != nil {
 			return domain.Aggregate{}, err
 		}
-		return a, nil
+		// Return a deep copy so that callers mutating the returned
+		// aggregate (e.g. appending proofs or recording idempotency)
+		// cannot corrupt the cached snapshot. This is critical when a
+		// subsequent Save fails: the cache must keep reflecting the last
+		// successfully persisted state, not the in-flight mutation.
+		return cloneAggregate(cached), nil
 	}
 	a, err := s.loadLocked(id)
 	if err == nil {
 		s.cache[id] = a
 	}
 	return a, err
+}
+
+// cloneAggregate produces a value-independent copy of a by marshalling and
+// unmarshalling. Aggregate holds reference-typed fields (maps and slices)
+// that a struct value copy would share, allowing in-flight mutations to leak
+// into the cache. The JSON round-trip allocates fresh copies of every
+// reference-typed field, matching the isolation provided by loadLocked when
+// reading from disk.
+func cloneAggregate(a domain.Aggregate) domain.Aggregate {
+	b, err := json.Marshal(a)
+	if err != nil {
+		return a
+	}
+	var copy domain.Aggregate
+	if err = json.Unmarshal(b, &copy); err != nil {
+		return a
+	}
+	if copy.Idempotency == nil {
+		copy.Idempotency = map[string]domain.IdempotencyRecord{}
+	}
+	return copy
 }
 func (s *FileStore) loadLocked(id string) (domain.Aggregate, error) {
 	dir, err := s.projectDir(id)
